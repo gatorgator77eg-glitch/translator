@@ -41,7 +41,8 @@ body {
 .app {
   max-width: 980px;
   margin: 0 auto;
-  padding: 24px 16px 40px;
+  padding: max(24px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+    max(40px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
   display: flex;
   flex-direction: column;
   gap: 20px;
@@ -184,15 +185,29 @@ body {
   border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--muted);
-  width: 32px;
-  height: 32px;
+  min-width: 40px;
+  min-height: 40px;
   font-size: 1rem;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .icon-btn:hover {
   color: var(--accent);
   border-color: var(--accent);
+}
+
+.icon-btn.speaking {
+  color: var(--danger);
+  border-color: var(--danger);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+.head-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .output {
@@ -203,15 +218,118 @@ body {
   font-size: 1.05rem;
 }
 
+.output .line {
+  margin-bottom: 6px;
+}
+
 .output .interim {
   color: var(--interim);
   font-style: italic;
+}
+
+.speaker-tag {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  padding: 2px 8px;
+  border-radius: 999px;
+  margin-right: 6px;
+}
+
+.output.provisional {
+  color: var(--interim);
+  font-style: italic;
+}
+
+.output.provisional::after {
+  content: " …";
 }
 
 .hint {
   margin: 10px 0 0;
   color: var(--muted);
   font-size: 0.85rem;
+}
+
+#room-status.error {
+  color: var(--danger);
+}
+
+.room-panel {
+  grid-column: 1 / -1;
+  min-height: 0;
+}
+
+.room-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.people-badge {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+  font-size: 0.95rem;
+}
+
+.speaker-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.speaker-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.speaker-chip:hover {
+  border-color: var(--accent);
+}
+
+.speaker-chip .speaker-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.speaker-chip.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.speaker-chip.active .speaker-dot {
+  background: var(--accent);
+}
+
+.speaker-chip.talking {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.speaker-chip.talking .speaker-dot {
+  background: var(--ok);
+  animation: dot-pulse 1s ease-in-out infinite;
+}
+
+@keyframes dot-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 60%, transparent); }
+  50% { box-shadow: 0 0 0 6px transparent; }
 }
 
 .controls {

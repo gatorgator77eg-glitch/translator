@@ -40,15 +40,31 @@ const elements = {
   statusLine: document.getElementById("status-line"),
   copyTranscriptBtn: document.getElementById("copy-transcript-btn"),
   copyTranslationBtn: document.getElementById("copy-translation-btn"),
+  speakTranslationBtn: document.getElementById("speak-translation-btn"),
 };
 
 const state = {
   recording: false,
   recognition: null,
+  mediaStream: null,
   supported: false,
   finals: [],
+  finalSpeakers: [],
   interim: "",
   lastTranslatedKey: "",
+  lastTranslatedFinals: "",
+  translateSeq: 0,
+  abortController: null,
+  streamFailures: 0,
+  streamingEnabled: true,
+  interimTimer: null,
+  lastInterimSent: "",
+};
+
+const tts = {
+  supported: "speechSynthesis" in window,
+  speaking: false,
+  timer: null,
 };
 
 const SpeechRecognitionCtor =
@@ -87,8 +103,8 @@ function populateLanguages() {
       select.appendChild(option);
     }
   }
-  elements.sourceLang.value = "en";
-  elements.targetLang.value = "es";
+  elements.sourceLang.value = "id";
+  elements.targetLang.value = "en";
 }
 
 function getFinalText() {
@@ -96,13 +112,14 @@ function getFinalText() {
 }
 
 function renderTranscript() {
-  const final = getFinalText();
   let html = "";
-  if (final) {
-    html += escapeHtml(final) + " ";
+  for (let i = 0; i < state.finals.length; i++) {
+    const label = state.finalSpeakers[i];
+    const tag = label ? `<span class="speaker-tag">${escapeHtml(label)}</span>` : "";
+    html += `<div class="line">${tag}${escapeHtml(state.finals[i])}</div>`;
   }
   if (state.interim) {
-    html += `<span class="interim">${escapeHtml(state.interim)}</span>`;
+    html += `<div class="line"><span class="interim">${escapeHtml(state.interim)}</span></div>`;
   }
   if (html) {
     elements.transcript.innerHTML = html;
@@ -113,7 +130,8 @@ function renderTranscript() {
   }
 }
 
-function renderTranslation(text) {
+function renderTranslation(text, provisional = false) {
+  elements.translation.classList.toggle("provisional", provisional);
   if (text) {
     elements.translation.textContent = text;
     elements.translationHint.hidden = true;
@@ -133,41 +151,97 @@ function escapeHtml(value) {
 
 let translateTimer = null;
 
+function cancelPendingTranslation() {
+  clearTimeout(translateTimer);
+  translateTimer = null;
+  clearTimeout(state.interimTimer);
+  state.interimTimer = null;
+  state.translateSeq += 1;
+  if (state.abortController) {
+    state.abortController.abort();
+    state.abortController = null;
+  }
+}
+
 function scheduleTranslation(force = false) {
   const text = getFinalText().trim();
   if (!text) {
+    cancelPendingTranslation();
     renderTranslation("");
     state.lastTranslatedKey = "";
+    state.lastTranslatedFinals = "";
     return;
   }
-  clearTimeout(translateTimer);
-  translateTimer = setTimeout(() => translateText(text), force ? 0 : 800);
+  cancelPendingTranslation();
+  translateTimer = setTimeout(() => translateText(text, { interim: false }), force ? 0 : 800);
 }
 
-async function translateText(text) {
-  const key = `${currentSource()}:${currentTarget()}:${text}`;
+function scheduleInterimTranslation() {
+  if (!state.recording || !state.streamingEnabled) return;
+  if (state.interimTimer) return;
+  const finals = getFinalText();
+  const tail = state.interim.trim();
+  if (tail.length < 4) return;
+  const full = (finals + " " + tail).trim();
+  const payload = finals === state.lastTranslatedFinals ? tail : full;
+  if (payload === state.lastInterimSent) return;
+  state.interimTimer = setTimeout(() => {
+    state.interimTimer = null;
+    if (!state.recording || !state.streamingEnabled) return;
+    state.lastInterimSent = payload;
+    translateText(payload, { interim: true });
+  }, 1100);
+}
+
+async function translateText(text, { interim = false } = {}) {
+  const key = `${currentSource()}:${currentTarget()}:${interim ? "~" : ":"}:${text}`;
   if (key === state.lastTranslatedKey) return;
   const source = currentSource();
   const target = currentTarget();
+  const mySeq = ++state.translateSeq;
+  if (state.abortController) state.abortController.abort();
+  const controller = new AbortController();
+  state.abortController = controller;
 
-  setStatus(state.recording ? "Listening…" : "Translating…");
+  if (!interim) setStatus(state.recording ? "Listening…" : "Translating…");
   try {
     const res = await fetch(`${API_BASE}/api/translate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ q: text, source, target }),
+      signal: controller.signal,
     });
     const data = await res.json();
     if (!res.ok) {
       throw new Error(data.error || `Request failed (${res.status})`);
     }
-    renderTranslation(data.translatedText);
+    if (mySeq !== state.translateSeq) return;
+    if (state.abortController === controller) state.abortController = null;
+    renderTranslation(data.translatedText, interim);
+    state.streamFailures = 0;
     state.lastTranslatedKey = key;
-    setStatus(state.recording ? "Listening…" : "Ready");
+    if (!interim) {
+      state.lastTranslatedFinals = getFinalText();
+      state.lastInterimSent = "";
+      stopSpeaking();
+      setStatus(state.recording ? "Listening…" : "Ready");
+    }
   } catch (err) {
-    renderTranslation("");
-    showBanner("error", `Translation failed: ${err.message}. Check that the backend is running.`);
-    setStatus("Translation unavailable", true);
+    if (err.name === "AbortError") return;
+    if (mySeq !== state.translateSeq) return;
+    if (state.abortController === controller) state.abortController = null;
+    if (interim) {
+      state.streamFailures += 1;
+      if (state.streamFailures >= 3) {
+        state.streamingEnabled = false;
+        showBanner("warn", "Live translation is having trouble — switching to translate-on-pause only.");
+        setStatus("Listening…");
+      }
+    } else {
+      renderTranslation("");
+      showBanner("error", `Translation failed: ${err.message}. Check that the backend is running.`);
+      setStatus("Translation unavailable", true);
+    }
   }
 }
 
@@ -176,6 +250,119 @@ function stopStreamTracks() {
     .getUserMedia({ audio: true })
     .then((stream) => stream.getTracks().forEach((track) => track.stop()))
     .catch(() => {});
+}
+
+function pickVoice(langCode) {
+  const voices = speechSynthesis.getVoices();
+  if (!voices.length) return null;
+  const code = langCode.toLowerCase();
+  const base = code.split("-")[0];
+  return (
+    voices.find((v) => v.lang.toLowerCase() === code) ||
+    voices.find((v) => v.lang.toLowerCase().startsWith(code + "-")) ||
+    voices.find((v) => v.lang.toLowerCase().startsWith(base + "-")) ||
+    voices.find((v) => v.lang.toLowerCase().startsWith(base)) ||
+    null
+  );
+}
+
+function updateSpeakButton() {
+  const btn = elements.speakTranslationBtn;
+  btn.classList.toggle("speaking", tts.speaking);
+  btn.setAttribute("aria-pressed", String(tts.speaking));
+  btn.title = tts.speaking ? "Stop speaking" : "Speak translation";
+  btn.textContent = tts.speaking ? "⏹" : "🔊";
+}
+
+function stopSpeaking() {
+  if (!tts.supported) return;
+  if (tts.timer) {
+    clearInterval(tts.timer);
+    tts.timer = null;
+  }
+  if (tts.speaking || speechSynthesis.speaking) {
+    speechSynthesis.cancel();
+  }
+  tts.speaking = false;
+  updateSpeakButton();
+}
+
+function speakTranslation() {
+  if (!tts.supported) return;
+  const text = elements.translation.textContent.trim();
+  if (!text) return;
+  if (tts.speaking) {
+    stopSpeaking();
+    return;
+  }
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = currentTarget();
+  utterance.rate = 1;
+  utterance.pitch = 1;
+  const voice = pickVoice(currentTarget());
+  if (voice) utterance.voice = voice;
+  utterance.onend = () => {
+    if (tts.timer) clearInterval(tts.timer);
+    tts.timer = null;
+    tts.speaking = false;
+    updateSpeakButton();
+  };
+  utterance.onerror = () => {
+    if (tts.timer) clearInterval(tts.timer);
+    tts.timer = null;
+    tts.speaking = false;
+    updateSpeakButton();
+  };
+  tts.speaking = true;
+  updateSpeakButton();
+  speechSynthesis.cancel();
+  speechSynthesis.speak(utterance);
+  tts.timer = setInterval(() => {
+    if (!tts.speaking) {
+      if (tts.timer) clearInterval(tts.timer);
+      tts.timer = null;
+      return;
+    }
+    if (speechSynthesis.speaking && speechSynthesis.paused) {
+      speechSynthesis.resume();
+    }
+  }, 5000);
+}
+
+function initTts() {
+  if (!tts.supported) {
+    elements.speakTranslationBtn.disabled = true;
+    elements.speakTranslationBtn.title = "Speech synthesis not supported in this browser";
+    return;
+  }
+  speechSynthesis.onvoiceschanged = () => {};
+  speechSynthesis.getVoices();
+}
+
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator) || !window.isSecureContext) return;
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch((err) => {
+      console.warn("Service worker registration failed:", err);
+    });
+  });
+}
+
+function initConnectivity() {
+  const update = () => {
+    if (navigator.onLine) {
+      clearBanner();
+      setStatus(state.recording ? "Listening…" : "Ready");
+    } else {
+      showBanner(
+        "warn",
+        "You're offline. The app shell is cached, but translation needs a network connection."
+      );
+      setStatus("Offline", true);
+    }
+  };
+  window.addEventListener("online", update);
+  window.addEventListener("offline", update);
 }
 
 function createRecognition() {
@@ -209,10 +396,12 @@ function startRecognition() {
     }
     if (finalText) {
       state.finals.push(finalText.trim());
+      state.finalSpeakers.push(speakers.currentLabel());
       state.interim = "";
       scheduleTranslation();
     }
     renderTranscript();
+    scheduleInterimTranslation();
   };
 
   recognition.onerror = (event) => {
@@ -270,9 +459,15 @@ function stopRecording() {
     } catch {}
     state.recognition = null;
   }
+  speakers.stop();
+  if (state.mediaStream) {
+    state.mediaStream.getTracks().forEach((track) => track.stop());
+    state.mediaStream = null;
+  }
   elements.micBtn.classList.remove("listening");
   elements.micLabel.textContent = "Start listening";
   renderTranscript();
+  state.lastInterimSent = "";
   scheduleTranslation(true);
   if (!state.finals.length) setStatus("Ready");
 }
@@ -284,10 +479,13 @@ async function toggleRecording() {
   }
   if (!state.supported) return;
 
+  stopSpeaking();
+
   setStatus("Requesting microphone…");
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    stream.getTracks().forEach((track) => track.stop());
+    state.mediaStream = stream;
+    speakers.start(stream);
     startRecognition();
   } catch (err) {
     showBanner("error", "Microphone permission was denied or unavailable. Allow mic access in your browser and try again.");
@@ -297,13 +495,28 @@ async function toggleRecording() {
 
 function clearAll() {
   stopRecording();
+  stopSpeaking();
+  cancelPendingTranslation();
   state.finals = [];
+  state.finalSpeakers = [];
   state.interim = "";
   state.lastTranslatedKey = "";
+  state.lastTranslatedFinals = "";
+  state.lastInterimSent = "";
+  state.streamFailures = 0;
+  state.streamingEnabled = true;
   renderTranscript();
   renderTranslation("");
   clearBanner();
   setStatus("Cleared");
+}
+
+function resetTranslationState() {
+  cancelPendingTranslation();
+  state.lastTranslatedKey = "";
+  state.lastTranslatedFinals = "";
+  state.lastInterimSent = "";
+  renderTranslation("");
 }
 
 function swapLanguages() {
@@ -315,6 +528,7 @@ function swapLanguages() {
       state.recognition.lang = currentSource();
     } catch {}
   }
+  resetTranslationState();
   scheduleTranslation(true);
 }
 
@@ -366,21 +580,30 @@ function bindEvents() {
         state.recognition.lang = currentSource();
       } catch {}
     }
+    resetTranslationState();
     scheduleTranslation(true);
   });
-  elements.targetLang.addEventListener("change", () => scheduleTranslation(true));
+  elements.targetLang.addEventListener("change", () => {
+    resetTranslationState();
+    scheduleTranslation(true);
+  });
   elements.copyTranscriptBtn.addEventListener("click", () =>
     copyText(getFinalText(), elements.copyTranscriptBtn)
   );
   elements.copyTranslationBtn.addEventListener("click", () =>
     copyText(elements.translation.textContent, elements.copyTranslationBtn)
   );
+  elements.speakTranslationBtn.addEventListener("click", speakTranslation);
 }
 
 function init() {
   populateLanguages();
   bindEvents();
   initSupport();
+  initTts();
+  speakers.init();
+  initConnectivity();
+  registerServiceWorker();
   setStatus("Idle");
 }
 

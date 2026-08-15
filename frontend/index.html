@@ -2,8 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
+  <meta name="theme-color" content="#2563eb" />
+  <meta name="description" content="Zero-cost voice translation: speak, transcribe, translate in your browser." />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="icon" type="image/png" href="icons/icon-192.png" />
   <title>Voice Translator — speak, transcribe, translate</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -42,10 +50,24 @@
       <div class="panel" id="translation-panel">
         <div class="panel-head">
           <h2>Translation</h2>
-          <button class="icon-btn" id="copy-translation-btn" type="button" title="Copy translation">⧉</button>
+          <div class="head-actions">
+            <button class="icon-btn" id="speak-translation-btn" type="button" title="Speak translation" aria-pressed="false">🔊</button>
+            <button class="icon-btn" id="copy-translation-btn" type="button" title="Copy translation">⧉</button>
+          </div>
         </div>
         <div id="translation" class="output" aria-live="polite"></div>
         <p id="translation-hint" class="hint">The translated text will appear here.</p>
+      </div>
+
+      <div class="panel room-panel" id="room-panel">
+        <div class="panel-head">
+          <h2>Room</h2>
+          <span id="people-count" class="badge people-badge" title="People detected by voice">0</span>
+        </div>
+        <div class="room-body">
+          <p id="room-status" class="hint">Start listening to detect people in the room.</p>
+          <div id="speaker-chips" class="speaker-chips" aria-label="Detected speakers"></div>
+        </div>
       </div>
     </section>
 
@@ -62,6 +84,7 @@
     </footer>
   </div>
 
+  <script src="speakers.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
