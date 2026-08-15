@@ -90,11 +90,20 @@
     </section>
 
     <section class="controls" aria-label="Recording controls">
+      <div class="mode-toggle" role="group" aria-label="Audio source">
+        <button id="mic-mode-btn" class="mode-btn active" type="button" aria-pressed="true" title="Translate your microphone">🎙 Mic</button>
+        <button id="screen-mode-btn" class="mode-btn" type="button" aria-pressed="false" title="Translate audio from another app (e.g. a Zoom meeting) — on-device STT">🖥 Screen audio</button>
+      </div>
       <button id="mic-btn" class="mic-btn" type="button" aria-keyshortcuts="Space">
         <span class="mic-icon" aria-hidden="true">🎙</span>
         <span id="mic-label">Start listening</span>
       </button>
       <button class="control-btn" id="clear-btn" type="button" aria-keyshortcuts="Control+Enter">Clear</button>
+      <p id="capture-hint" class="capture-hint" hidden>
+        Meeting/screen audio: share the meeting window or screen and tick
+        “Share audio”. On Windows, sharing your screen captures full system
+        audio. Source languages for on-device STT: Indonesian, English, French.
+      </p>
     </section>
 
     <footer class="app-footer">
@@ -106,6 +115,7 @@
   <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
   <script src="speakers.js"></script>
+  <script src="asr.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

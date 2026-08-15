@@ -28,6 +28,9 @@ frontend/            Vanilla HTML/CSS/JS SPA (static server on :8080)
   index.html         UI layout
   styles.css         responsive styling + visual states
   app.js             Web Speech API + translation + controls
+  speakers.js        Room speaker diarization (UI side)
+  speakers.worker.js on-device speaker detection worker (diarization-js + ONNX)
+  asr.js             on-device STT (vosk-browser/WASM) for screen-audio mode
   serve.mjs          zero-dep static file server
 
 backend/             API proxy on :3000
@@ -37,6 +40,7 @@ backend/             API proxy on :3000
 
 scripts/dev.mjs                 runs both servers together
 scripts/setup_libretranslate.ps1  self-hosts LibreTranslate in .venv (optional)
+scripts/setup-vosk-models.ps1     fetches the Indonesian STT model (optional)
 ```
 
 The browser cannot call translation providers directly (CORS + rate limits), so
@@ -113,6 +117,9 @@ Set `LT_LANGS=en,es,fr,ja npm run dev` to auto-load a custom set on each start.
 - **Ergonomics**: sticky bottom controls, keyboard shortcuts
   (`Space` = mic, `Ctrl+Enter` = clear, `Esc` = stop audio), a Light/Dark/System
   theme toggle (persisted), and `prefers-reduced-motion` support.
+- **Screen / meeting audio mode**: capture audio from another app (e.g. a Zoom
+  meeting) with a **Mic / Screen audio** toggle and translate it with fully
+  on-device speech recognition (see below).
 
 ## Room: detect who is talking (one mic)
 
@@ -137,6 +144,62 @@ The **Room** panel counts how many distinct people are in the room **by voice on
 - Inference is CPU/WASM and runs in a worker so the UI stays smooth, but on slow
   phones updates arrive less often.
 - **Privacy note:** the diarization models and your audio never leave your device.
+
+## Screen / meeting audio translation (experimental)
+
+Switch the **Mic / Screen audio** toggle to capture audio from another
+application (a Zoom call, a video, a game…) instead of your microphone, and get
+the same live transcript + translation + Room speaker detection. Because the
+browser's SpeechRecognition only accepts the system microphone, this mode uses
+**vosk-browser** — Vosk compiled to WASM — so all speech-to-text runs locally
+(no audio leaves your device).
+
+- Click **Screen audio**, then **Capture screen audio**: pick the meeting window
+  or your whole screen in the browser picker and tick **"Share audio"** (on
+  Windows, sharing the screen captures full system audio).
+- The captured audio feeds on-device STT *and* the Room panel, so you get live
+  translation and per-call speaker detection at once.
+- Models (~40 MB each) download on first use and are cached by the browser +
+  service worker. Source languages for this mode are limited to the available
+  Vosk models:
+
+| Language  | Model | Size | License |
+| --------- | ----- | ---- | ------- |
+| English   | `vosk-model-small-en-us-0.15` (ccoreilly GitHub Pages) | 39 MB | Apache-2.0 |
+| French    | `vosk-model-small-fr-pguyot-0.3` (ccoreilly GitHub Pages) | 44 MB | CC-BY-NC-SA 4.0 |
+| Indonesian| bookbot `model-id-id` → `frontend/models/vosk-model-small-id.tar.gz` | ~42 MB | Apache-2.0 |
+
+### Indonesian model (one-time setup)
+
+Vosk has **no official Indonesian model**; this app ships the public
+bookbot-kids Indonesian Vosk model instead. It must be downloaded and packed
+once:
+
+```powershell
+npm run setup:vosk-models
+```
+
+This fetches the model files from `github.com/bookbot-kids/
+speech-recognizer-bahasa-indonesian` and packs them into
+`frontend/models/vosk-model-small-id.tar.gz` (using the `tar` bundled with
+Windows). Reload the app afterwards. If the file is missing, Screen-audio mode
+shows a clear toast pointing at this command.
+
+### Honest limitations
+
+- **Indonesian accuracy**: the model is trained on children's speech with a
+  small dictionary, so meeting transcription in Indonesian is noticeably less
+  accurate than English/French.
+- **Platforms**: display-capture audio needs Chrome or Edge. Windows + ChromeOS
+  capture full system audio when sharing the screen; macOS/Linux can only
+  capture a browser tab's audio. The screen-audio toggle is hidden/disabled
+  where `getDisplayMedia` is unsupported.
+- The on-device engine and each model load on first use (a few seconds to
+  extract a ~40 MB archive in a worker); the UI reports progress.
+- Vosk models run in a Web Worker so the UI stays responsive, but very slow
+  devices may lag on translation updates.
+- **Privacy note:** screen audio is transcribed locally — nothing is sent to
+  any speech service.
 
 ## PWA / offline & mobile
 
@@ -180,3 +243,9 @@ Manual browser checklist (Chrome/Edge):
     the current speaker's chip pulses (first run downloads the ~33 MB model;
     DevTools → Network will show huggingface.co + cdn.jsdelivr.net fetches).
     Tap a chip to rename it; say more → conversation lines get the speaker tag.
+14. Screen-audio mode: switch to **Screen audio**, capture a tab playing audio,
+    tick "Share audio" → transcript + translations appear (first run downloads
+    the ~40 MB Vosk model + engine from cdn.jsdelivr.net / ccoreilly.github.io).
+15. Indonesian screen audio: run `npm run setup:vosk-models`, reload, capture a
+    screen with Indonesian speech → Indonesian transcription appears; the Room
+    panel keeps detecting speakers.

@@ -35,6 +35,9 @@ const elements = {
   micBtn: document.getElementById("mic-btn"),
   micLabel: document.getElementById("mic-label"),
   clearBtn: document.getElementById("clear-btn"),
+  micModeBtn: document.getElementById("mic-mode-btn"),
+  screenModeBtn: document.getElementById("screen-mode-btn"),
+  captureHint: document.getElementById("capture-hint"),
   transcript: document.getElementById("transcript"),
   transcriptHint: document.getElementById("transcript-hint"),
   translation: document.getElementById("translation"),
@@ -61,6 +64,8 @@ const state = {
   streamingEnabled: true,
   interimTimer: null,
   lastInterimSent: "",
+  captureMode: "mic",
+  captureVideo: null,
 };
 
 const tts = {
@@ -509,6 +514,25 @@ function cycleTheme() {
   toast(`Theme: ${next}`, "info", 1200);
 }
 
+function pushTranscript(finalText) {
+  const text = finalText.trim();
+  if (!text) return;
+  const speaker = speakers.currentSpeaker();
+  state.entries.push({
+    source: text,
+    translation: "",
+    speakerLabel: speaker ? speaker.label : "",
+    speakerColor: speaker ? speaker.color : "",
+    ts: formatTime(new Date()),
+    pending: true,
+    translating: false,
+    ctrl: null,
+  });
+  state.interim = "";
+  scheduleTranslation();
+  renderConversation();
+}
+
 function createRecognition() {
   const recognition = new SpeechRecognitionCtor();
   recognition.continuous = true;
@@ -539,19 +563,8 @@ function startRecognition() {
       }
     }
     if (finalText) {
-      const speaker = speakers.currentSpeaker();
-      state.entries.push({
-        source: finalText.trim(),
-        translation: "",
-        speakerLabel: speaker ? speaker.label : "",
-        speakerColor: speaker ? speaker.color : "",
-        ts: formatTime(new Date()),
-        pending: true,
-        translating: false,
-        ctrl: null,
-      });
+      pushTranscript(finalText);
       state.interim = "";
-      scheduleTranslation();
     }
     renderConversation();
     scheduleInterimTranslation();
@@ -599,7 +612,7 @@ function startRecognition() {
   recognition.start();
   state.recording = true;
   elements.micBtn.classList.add("listening");
-  elements.micLabel.textContent = "Stop listening";
+  updateMicLabel();
   clearBanner();
 }
 
@@ -613,17 +626,100 @@ function stopRecording() {
     state.recognition = null;
   }
   speakers.stop();
+  asr.stop();
   if (state.mediaStream) {
     state.mediaStream.getTracks().forEach((track) => track.stop());
     state.mediaStream = null;
   }
+  if (state.captureVideo) {
+    state.captureVideo.srcObject = null;
+    state.captureVideo.remove();
+    state.captureVideo = null;
+  }
   elements.micBtn.classList.remove("listening");
-  elements.micLabel.textContent = "Start listening";
+  updateMicLabel();
   state.interim = "";
   renderConversation();
   state.lastInterimSent = "";
   scheduleTranslation(true);
   if (!state.entries.length) setStatus("Ready");
+}
+
+async function startScreenRecording() {
+  setStatus("Choose the meeting window or screen and tick “Share audio”…");
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({
+      video: { displaySurface: "browser" },
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      systemAudio: "include",
+    });
+  } catch (err) {
+    if (err.name === "NotAllowedError" || err.name === "AbortError") {
+      toast("Screen capture was cancelled.", "info", 3000);
+      setStatus("Ready");
+    } else {
+      toast(`Screen capture failed: ${err.message}`, "error", 6000);
+      setStatus("Screen capture unavailable", true);
+    }
+    return;
+  }
+  if (!stream.getAudioTracks().length) {
+    stream.getTracks().forEach((track) => track.stop());
+    toast("No audio was shared. Try again and tick “Share audio” for the tab or screen.", "warn", 6000);
+    setStatus("Ready");
+    return;
+  }
+  state.mediaStream = stream;
+  state.recording = true;
+  elements.micBtn.classList.add("listening");
+  updateMicLabel();
+  clearBanner();
+
+  const videoTracks = stream.getVideoTracks();
+  if (videoTracks.length) {
+    const video = document.createElement("video");
+    video.srcObject = stream;
+    video.muted = true;
+    video.playsInline = true;
+    video.className = "capture-hidden-video";
+    document.body.appendChild(video);
+    video.play().catch(() => {});
+    state.captureVideo = video;
+  }
+
+  speakers.start(stream);
+  setStatus("Preparing on-device speech recognition (first run downloads the model)…");
+  try {
+    await asr.start(stream, currentSource());
+    if (!state.recording) {
+      asr.stop();
+      return;
+    }
+    setStatus("Capturing — listening to meeting audio…");
+    toast("Capturing meeting audio — speak in the call.", "info", 2500);
+  } catch (err) {
+    if (!state.recording) {
+      asr.stop();
+      return;
+    }
+    state.recording = false;
+    speakers.stop();
+    asr.stop();
+    if (state.mediaStream) {
+      state.mediaStream.getTracks().forEach((track) => track.stop());
+      state.mediaStream = null;
+    }
+    if (state.captureVideo) {
+      state.captureVideo.srcObject = null;
+      state.captureVideo.remove();
+      state.captureVideo = null;
+    }
+    elements.micBtn.classList.remove("listening");
+    updateMicLabel();
+    toast(err.message, "error", 7000);
+    setStatus("Screen audio unavailable", true);
+  }
 }
 
 async function toggleRecording() {
@@ -635,6 +731,11 @@ async function toggleRecording() {
 
   stopSpeaking();
 
+  if (state.captureMode === "screen") {
+    await startScreenRecording();
+    return;
+  }
+
   setStatus("Requesting microphone…");
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -645,6 +746,47 @@ async function toggleRecording() {
     toast("Microphone permission was denied or unavailable. Allow mic access and try again.", "error", 5000);
     setStatus("Microphone blocked", true);
   }
+}
+
+function updateMicLabel() {
+  if (state.captureMode === "screen") {
+    elements.micLabel.textContent = state.recording ? "Stop capturing" : "Capture screen audio";
+  } else {
+    elements.micLabel.textContent = state.recording ? "Stop listening" : "Start listening";
+  }
+}
+
+function setCaptureMode(mode) {
+  if (mode === state.captureMode) return;
+  if (state.recording) stopRecording();
+  state.captureMode = mode;
+  elements.micModeBtn.classList.toggle("active", mode === "mic");
+  elements.screenModeBtn.classList.toggle("active", mode === "screen");
+  elements.micModeBtn.setAttribute("aria-pressed", String(mode === "mic"));
+  elements.screenModeBtn.setAttribute("aria-pressed", String(mode === "screen"));
+  elements.captureHint.hidden = mode !== "screen";
+  updateMicLabel();
+}
+
+function initCaptureMode() {
+  const hasDisplay = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+  if (!hasDisplay) {
+    elements.screenModeBtn.disabled = true;
+    elements.screenModeBtn.title = "Screen/meeting audio capture is not supported in this browser";
+  }
+  setCaptureMode("mic");
+}
+
+function bindASR() {
+  asr.setCallbacks({
+    onFinal: (text) => pushTranscript(text),
+    onPartial: (text) => {
+      state.interim = text;
+      renderConversation();
+      scheduleInterimTranslation();
+    },
+    onStatus: (message) => setStatus(message),
+  });
 }
 
 function clearAll() {
@@ -681,6 +823,12 @@ function swapLanguages() {
     try {
       state.recognition.lang = currentSource();
     } catch {}
+  }
+  if (state.recording && state.captureMode === "screen") {
+    asr.setLang(currentSource()).catch((err) => {
+      toast(err.message, "error", 7000);
+      stopRecording();
+    });
   }
   resetTranslationState();
   retranslateAll();
@@ -755,11 +903,19 @@ function bindEvents() {
   elements.clearBtn.addEventListener("click", clearAll);
   elements.swapBtn.addEventListener("click", swapLanguages);
   elements.themeBtn.addEventListener("click", cycleTheme);
+  elements.micModeBtn.addEventListener("click", () => setCaptureMode("mic"));
+  elements.screenModeBtn.addEventListener("click", () => setCaptureMode("screen"));
   elements.sourceLang.addEventListener("change", () => {
     if (state.recognition) {
       try {
         state.recognition.lang = currentSource();
       } catch {}
+    }
+    if (state.recording && state.captureMode === "screen") {
+      asr.setLang(currentSource()).catch((err) => {
+        toast(err.message, "error", 7000);
+        stopRecording();
+      });
     }
     resetTranslationState();
     retranslateAll();
@@ -788,6 +944,8 @@ function init() {
   initSupport();
   initTts();
   speakers.init();
+  initCaptureMode();
+  bindASR();
   initConnectivity();
   bindShortcuts();
   registerServiceWorker();

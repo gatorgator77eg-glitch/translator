@@ -9,7 +9,8 @@
     "start:backend": "node backend/server.mjs",
     "start:frontend": "node frontend/serve.mjs",
     "test:backend": "node --test backend/test.mjs",
-    "icons": "node scripts/generate-icons.mjs"
+    "icons": "node scripts/generate-icons.mjs",
+    "setup:vosk-models": "powershell -ExecutionPolicy Bypass -File scripts\\setup-vosk-models.ps1"
   },
   "engines": {
     "node": ">=18"

@@ -17,7 +17,12 @@ const MIME = {
   ".svg": "image/svg+xml",
   ".ico": "image/x-icon",
   ".woff2": "font/woff2",
+  ".gz": "application/gzip",
 };
+
+function cacheControl(filePath) {
+  return extname(filePath) === ".gz" ? "public, max-age=3600" : "no-cache";
+}
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
@@ -38,11 +43,19 @@ const server = http.createServer(async (req, res) => {
       res.end();
       return;
     }
-    const body = await readFile(filePath);
-    res.writeHead(200, {
+    const headers = {
       "Content-Type": MIME[extname(filePath)] || "application/octet-stream",
-      "Cache-Control": "no-cache",
-    });
+      "Cache-Control": cacheControl(filePath),
+      "Last-Modified": info.mtime.toUTCString(),
+    };
+    const ims = req.headers["if-modified-since"];
+    if (ims && new Date(ims).getTime() >= info.mtime.getTime() - 1000) {
+      res.writeHead(304, headers);
+      res.end();
+      return;
+    }
+    const body = await readFile(filePath);
+    res.writeHead(200, headers);
     res.end(body);
   } catch {
     res.writeHead(404);

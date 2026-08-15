@@ -1,8 +1,12 @@
 "use strict";
 
-const CACHE_NAME = "voice-translator-v3";
+const CACHE_NAME = "voice-translator-v4";
 const CDN_CACHE_NAME = "voice-translator-cdn-v1";
-const CDN_ORIGINS = ["https://cdn.jsdelivr.net", "https://huggingface.co"];
+const CDN_ORIGINS = [
+  "https://cdn.jsdelivr.net",
+  "https://huggingface.co",
+  "https://ccoreilly.github.io",
+];
 const PRECACHE = [
   "./",
   "./index.html",
@@ -10,6 +14,7 @@ const PRECACHE = [
   "./app.js",
   "./speakers.js",
   "./speakers.worker.js",
+  "./asr.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
