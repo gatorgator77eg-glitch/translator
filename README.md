@@ -72,7 +72,7 @@ Set `LT_LANGS=en,es,fr,ja npm run dev` to auto-load a custom set on each start.
 ```
 
 ```json
-{ "translatedText": "hola", "provider": "mymemory" }
+{ "translatedText": "hola", "provider": "mymemory", "ms": 243 }
 ```
 
 `GET /api/health` — reports whether each provider is reachable.
@@ -91,18 +91,28 @@ Set `LT_LANGS=en,es,fr,ja npm run dev` to auto-load a custom set on each start.
 
 - Microphone permission requested on user click; denials handled gracefully.
 - Source and target language dropdowns (BCP-47 codes) + one-click swap.
-- Live interim transcript (words appear as you speak), finalized text preserved.
-- **Live streaming translation**: the Translation panel updates while you speak
-  (interim text, throttled), not just on pauses. Falls back to translate-on-pause
-  automatically if the service is unreliable.
-- Auto-translation of the accumulated final text on pause or stop.
+- **Bilingual conversation view**: every spoken line appears in the Conversation
+  panel with its own translation underneath, per-line timestamp, and speaker tag;
+  a separate **Live translation** panel shows the current utterance as it streams.
+- **Live streaming translation**: the Live panel updates while you speak (interim
+  text, throttled, dimmed with trailing "…"), not just on pauses. Falls back to
+  translate-on-pause automatically if the service is unreliable.
+- **Engine indicator**: Live translation shows which provider produced the text
+  (LibreTranslate or MyMemory) and the latency in ms.
+- **Speaker color-coding**: each detected speaker gets a stable color used across
+  the Room chips and the Conversation speaker tags.
 - Text-to-speech: 🔊 button reads the translation aloud (browser-native
   `speechSynthesis`, voice auto-matched to the target language; stops on new
   translation, clear, or when recording starts).
-- Clear, copy transcript, and copy translation controls.
+- Clear, copy conversation, and copy translation controls.
 - **Installable PWA**: service worker caches the app shell (works offline), web
   manifest + icons let you install it as an app on desktop and mobile.
-- Clear error/status banner for unsupported browsers, mic denial, and network drops.
+- **Toasts** for transient events (mic errors, copy confirmations, theme changes)
+  instead of shifting the layout; the banner is reserved for persistent states
+  (offline, unsupported browser).
+- **Ergonomics**: sticky bottom controls, keyboard shortcuts
+  (`Space` = mic, `Ctrl+Enter` = clear, `Esc` = stop audio), a Light/Dark/System
+  theme toggle (persisted), and `prefers-reduced-motion` support.
 
 ## Room: detect who is talking (one mic)
 
@@ -151,18 +161,22 @@ npm run test:backend
 
 Manual browser checklist (Chrome/Edge):
 
-1. Allow mic permission when prompted; speak → words appear live in Transcript.
-2. Speak continuously → Translation panel updates live while talking (dimmed,
-   trailing "…"); pause → clean final translation replaces it.
-3. Swap languages → previous translation replaced.
-4. Copy transcript / translation → clipboard contains the text.
-5. Clear → both panels empty.
-6. Deny mic → friendly banner, app stays usable.
-7. Stop the backend (`npm run start:backend`) → translating shows a network notice.
-8. DevTools → Application → Manifest + Service Worker registered; reload with
-   Network set to Offline → shell still loads, offline banner appears.
-9. Install the app from the address bar → opens standalone with the icon.
-10. Room panel: start listening with 2+ people talking → the badge counts them and
+1. Allow mic permission when prompted; speak → words appear live in Conversation.
+2. Speak continuously → Live translation updates while talking (dimmed, trailing
+   "…"); pause → clean final translation replaces it and the Conversation entry
+   gets its own translation underneath.
+3. Check the engine indicator under Live translation shows e.g. "MyMemory · 310 ms".
+4. Swap languages → all conversation lines re-translate into the new target.
+5. Copy conversation / copy translation → clipboard contains the text.
+6. Clear → both panels empty.
+7. Deny mic → toast with a friendly message, app stays usable.
+8. Theme toggle cycles System/Light/Dark and persists across reloads.
+9. Keyboard: `Space` toggles the mic, `Ctrl+Enter` clears, `Esc` stops spoken audio.
+10. Stop the backend (`npm run start:backend`) → translating shows an error toast.
+11. DevTools → Application → Manifest + Service Worker registered; reload with
+    Network set to Offline → shell still loads, offline banner appears.
+12. Install the app from the address bar → opens standalone with the icon.
+13. Room panel: start listening with 2+ people talking → the badge counts them and
     the current speaker's chip pulses (first run downloads the ~33 MB model;
     DevTools → Network will show huggingface.co + cdn.jsdelivr.net fetches).
-    Tap a chip to rename it; say more → transcript lines get the speaker tag.
+    Tap a chip to rename it; say more → conversation lines get the speaker tag.

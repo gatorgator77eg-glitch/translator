@@ -27,6 +27,8 @@ const LANGUAGES = {
 const elements = {
   banner: document.getElementById("banner"),
   supportBadge: document.getElementById("support-badge"),
+  themeBtn: document.getElementById("theme-btn"),
+  toastContainer: document.getElementById("toast-container"),
   sourceLang: document.getElementById("source-lang"),
   targetLang: document.getElementById("target-lang"),
   swapBtn: document.getElementById("swap-btn"),
@@ -36,6 +38,7 @@ const elements = {
   transcript: document.getElementById("transcript"),
   transcriptHint: document.getElementById("transcript-hint"),
   translation: document.getElementById("translation"),
+  translationMeta: document.getElementById("translation-meta"),
   translationHint: document.getElementById("translation-hint"),
   statusLine: document.getElementById("status-line"),
   copyTranscriptBtn: document.getElementById("copy-transcript-btn"),
@@ -48,8 +51,7 @@ const state = {
   recognition: null,
   mediaStream: null,
   supported: false,
-  finals: [],
-  finalSpeakers: [],
+  entries: [],
   interim: "",
   lastTranslatedKey: "",
   lastTranslatedFinals: "",
@@ -86,6 +88,25 @@ function setStatus(message, isError = false) {
   elements.statusLine.classList.toggle("error", isError);
 }
 
+function toast(message, kind = "info", ms = 3000) {
+  const container = elements.toastContainer;
+  if (!container) return;
+  const el = document.createElement("div");
+  el.className = `toast ${kind}`;
+  el.setAttribute("role", kind === "error" ? "alert" : "status");
+  el.textContent = message;
+  container.appendChild(el);
+  let removed = false;
+  const remove = () => {
+    if (removed) return;
+    removed = true;
+    el.classList.add("hide");
+    setTimeout(() => el.remove(), 250);
+  };
+  el.addEventListener("click", remove);
+  setTimeout(remove, ms);
+}
+
 function currentSource() {
   return elements.sourceLang.value;
 }
@@ -108,18 +129,38 @@ function populateLanguages() {
 }
 
 function getFinalText() {
-  return state.finals.join(" ");
+  return state.entries.map((e) => e.source).join(" ");
 }
 
-function renderTranscript() {
+function formatTime(date) {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(date.getHours())}:${p(date.getMinutes())}:${p(date.getSeconds())}`;
+}
+
+function autoScrollTranscript() {
+  const el = elements.transcript;
+  if (el.scrollHeight - el.scrollTop - el.clientHeight < 160) {
+    el.scrollTop = el.scrollHeight;
+  }
+}
+
+function renderConversation() {
   let html = "";
-  for (let i = 0; i < state.finals.length; i++) {
-    const label = state.finalSpeakers[i];
-    const tag = label ? `<span class="speaker-tag">${escapeHtml(label)}</span>` : "";
-    html += `<div class="line">${tag}${escapeHtml(state.finals[i])}</div>`;
+  for (const entry of state.entries) {
+    const color = entry.speakerColor || "var(--accent)";
+    const tag = entry.speakerLabel
+      ? `<span class="speaker-tag" style="--spk-color:${color}">${escapeHtml(entry.speakerLabel)}</span>`
+      : "";
+    const trans = entry.translation
+      ? `<div class="conv-trans">${escapeHtml(entry.translation)}</div>`
+      : `<div class="conv-trans pending" aria-hidden="true">…</div>`;
+    html += `<div class="conv-entry" style="--spk-color:${color}">`;
+    html += `<div class="conv-source">${tag}<span class="line-text">${escapeHtml(entry.source)}</span><time class="line-time">${entry.ts}</time></div>`;
+    html += trans;
+    html += `</div>`;
   }
   if (state.interim) {
-    html += `<div class="line"><span class="interim">${escapeHtml(state.interim)}</span></div>`;
+    html += `<div class="line interim">${escapeHtml(state.interim)}</div>`;
   }
   if (html) {
     elements.transcript.innerHTML = html;
@@ -128,9 +169,14 @@ function renderTranscript() {
     elements.transcript.textContent = "";
     elements.transcriptHint.hidden = false;
   }
+  autoScrollTranscript();
 }
 
-function renderTranslation(text, provisional = false) {
+function providerName(provider) {
+  return provider === "libretranslate" ? "LibreTranslate" : "MyMemory";
+}
+
+function renderLive(text, provisional = false, provider = null, ms = 0) {
   elements.translation.classList.toggle("provisional", provisional);
   if (text) {
     elements.translation.textContent = text;
@@ -138,6 +184,14 @@ function renderTranslation(text, provisional = false) {
   } else {
     elements.translation.textContent = "";
     elements.translationHint.hidden = false;
+  }
+  if (elements.translationMeta) {
+    if (text && provider) {
+      elements.translationMeta.hidden = false;
+      elements.translationMeta.textContent = `${providerName(provider)} · ${ms} ms`;
+    } else {
+      elements.translationMeta.hidden = true;
+    }
   }
 }
 
@@ -163,17 +217,94 @@ function cancelPendingTranslation() {
   }
 }
 
+function abortEntryFetches() {
+  for (const entry of state.entries) {
+    if (entry.ctrl) {
+      try {
+        entry.ctrl.abort();
+      } catch {}
+      entry.ctrl = null;
+    }
+    entry.translating = false;
+  }
+}
+
 function scheduleTranslation(force = false) {
-  const text = getFinalText().trim();
-  if (!text) {
-    cancelPendingTranslation();
-    renderTranslation("");
-    state.lastTranslatedKey = "";
-    state.lastTranslatedFinals = "";
+  const lastPending = [...state.entries]
+    .reverse()
+    .find((e) => e.pending && !e.translating);
+  if (!lastPending) {
+    if (!state.entries.length) {
+      cancelPendingTranslation();
+      renderLive("");
+    }
     return;
   }
   cancelPendingTranslation();
-  translateTimer = setTimeout(() => translateText(text, { interim: false }), force ? 0 : 800);
+  translateTimer = setTimeout(() => translateEntry(lastPending), force ? 0 : 400);
+}
+
+async function translateEntry(entry) {
+  if (!entry.pending || entry.translating) return;
+  entry.translating = true;
+  const source = currentSource();
+  const target = currentTarget();
+  const mySeq = ++state.translateSeq;
+  const controller = new AbortController();
+  entry.ctrl = controller;
+  try {
+    const res = await fetch(`${API_BASE}/api/translate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ q: entry.source, source, target }),
+      signal: controller.signal,
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || `Request failed (${res.status})`);
+    }
+    entry.translation = data.translatedText;
+    entry.pending = false;
+    state.streamFailures = 0;
+    state.lastTranslatedKey = `${source}:${target}::${entry.source}`;
+    if (
+      mySeq === state.translateSeq &&
+      state.entries[state.entries.length - 1] === entry
+    ) {
+      state.lastTranslatedFinals = getFinalText();
+      state.lastInterimSent = "";
+      stopSpeaking();
+      renderLive(data.translatedText, false, data.provider, data.ms || 0);
+      setStatus(state.recording ? "Listening…" : "Ready");
+    }
+    renderConversation();
+  } catch (err) {
+    if (err.name === "AbortError") return;
+    if (mySeq !== state.translateSeq) {
+      entry.translating = false;
+      return;
+    }
+    entry.translating = false;
+    entry.pending = false;
+    entry.translation = "";
+    toast(`Translation failed: ${err.message}. Check that the backend is running.`, "error", 6000);
+    setStatus("Translation unavailable", true);
+    renderConversation();
+  } finally {
+    if (entry.ctrl === controller) entry.ctrl = null;
+  }
+}
+
+async function retranslateAll() {
+  abortEntryFetches();
+  for (const entry of state.entries) {
+    entry.pending = true;
+    entry.translation = "";
+  }
+  renderConversation();
+  for (const entry of state.entries) {
+    await translateEntry(entry);
+  }
 }
 
 function scheduleInterimTranslation() {
@@ -189,21 +320,19 @@ function scheduleInterimTranslation() {
     state.interimTimer = null;
     if (!state.recording || !state.streamingEnabled) return;
     state.lastInterimSent = payload;
-    translateText(payload, { interim: true });
+    translateInterim(payload);
   }, 1100);
 }
 
-async function translateText(text, { interim = false } = {}) {
-  const key = `${currentSource()}:${currentTarget()}:${interim ? "~" : ":"}:${text}`;
-  if (key === state.lastTranslatedKey) return;
+async function translateInterim(text) {
   const source = currentSource();
   const target = currentTarget();
+  const key = `${source}:${target}:~:${text}`;
+  if (key === state.lastTranslatedKey) return;
   const mySeq = ++state.translateSeq;
   if (state.abortController) state.abortController.abort();
   const controller = new AbortController();
   state.abortController = controller;
-
-  if (!interim) setStatus(state.recording ? "Listening…" : "Translating…");
   try {
     const res = await fetch(`${API_BASE}/api/translate`, {
       method: "POST",
@@ -217,30 +346,18 @@ async function translateText(text, { interim = false } = {}) {
     }
     if (mySeq !== state.translateSeq) return;
     if (state.abortController === controller) state.abortController = null;
-    renderTranslation(data.translatedText, interim);
     state.streamFailures = 0;
     state.lastTranslatedKey = key;
-    if (!interim) {
-      state.lastTranslatedFinals = getFinalText();
-      state.lastInterimSent = "";
-      stopSpeaking();
-      setStatus(state.recording ? "Listening…" : "Ready");
-    }
+    renderLive(data.translatedText, true, data.provider, data.ms || 0);
   } catch (err) {
     if (err.name === "AbortError") return;
     if (mySeq !== state.translateSeq) return;
     if (state.abortController === controller) state.abortController = null;
-    if (interim) {
-      state.streamFailures += 1;
-      if (state.streamFailures >= 3) {
-        state.streamingEnabled = false;
-        showBanner("warn", "Live translation is having trouble — switching to translate-on-pause only.");
-        setStatus("Listening…");
-      }
-    } else {
-      renderTranslation("");
-      showBanner("error", `Translation failed: ${err.message}. Check that the backend is running.`);
-      setStatus("Translation unavailable", true);
+    state.streamFailures += 1;
+    if (state.streamFailures >= 3) {
+      state.streamingEnabled = false;
+      toast("Live translation is having trouble — switching to translate-on-pause only.", "warn", 6000);
+      setStatus("Listening…");
     }
   }
 }
@@ -365,6 +482,33 @@ function initConnectivity() {
   window.addEventListener("offline", update);
 }
 
+const THEMES = ["system", "light", "dark"];
+
+function applyTheme(theme) {
+  const root = document.documentElement;
+  const meta = document.querySelector('meta[name="color-scheme"]');
+  if (theme === "system") {
+    root.removeAttribute("data-theme");
+    if (meta) meta.content = "light dark";
+  } else {
+    root.dataset.theme = theme;
+    if (meta) meta.content = theme;
+  }
+}
+
+function cycleTheme() {
+  let current = "system";
+  try {
+    current = localStorage.getItem("vt.theme") || "system";
+  } catch {}
+  const next = THEMES[(THEMES.indexOf(current) + 1) % THEMES.length];
+  try {
+    localStorage.setItem("vt.theme", next);
+  } catch {}
+  applyTheme(next);
+  toast(`Theme: ${next}`, "info", 1200);
+}
+
 function createRecognition() {
   const recognition = new SpeechRecognitionCtor();
   recognition.continuous = true;
@@ -380,7 +524,7 @@ function startRecognition() {
 
   recognition.onstart = () => {
     setStatus("Listening…");
-    showBanner("info", "Listening. Speak now — interim text updates live.");
+    toast("Listening — speak now.", "info", 2000);
   };
 
   recognition.onresult = (event) => {
@@ -395,12 +539,21 @@ function startRecognition() {
       }
     }
     if (finalText) {
-      state.finals.push(finalText.trim());
-      state.finalSpeakers.push(speakers.currentLabel());
+      const speaker = speakers.currentSpeaker();
+      state.entries.push({
+        source: finalText.trim(),
+        translation: "",
+        speakerLabel: speaker ? speaker.label : "",
+        speakerColor: speaker ? speaker.color : "",
+        ts: formatTime(new Date()),
+        pending: true,
+        translating: false,
+        ctrl: null,
+      });
       state.interim = "";
       scheduleTranslation();
     }
-    renderTranscript();
+    renderConversation();
     scheduleInterimTranslation();
   };
 
@@ -409,25 +562,25 @@ function startRecognition() {
       case "not-allowed":
       case "service-not-allowed":
         stopRecording();
-        showBanner("error", "Microphone permission was denied. Allow mic access in your browser and try again.");
+        toast("Microphone permission was denied. Allow mic access and try again.", "error", 5000);
         setStatus("Microphone blocked", true);
         break;
       case "no-speech":
         break;
       case "audio-capture":
         stopRecording();
-        showBanner("error", "No microphone found. Connect a microphone and try again.");
+        toast("No microphone found. Connect a microphone and try again.", "error", 5000);
         setStatus("No microphone detected", true);
         break;
       case "network":
         stopRecording();
-        showBanner("error", "Speech service network error. Check your connection and try again.");
+        toast("Speech service network error. Check your connection and try again.", "error", 5000);
         setStatus("Network error", true);
         break;
       case "aborted":
         break;
       default:
-        showBanner("warn", `Speech recognition error: ${event.error}`);
+        toast(`Speech recognition error: ${event.error}`, "warn", 4000);
     }
   };
 
@@ -466,10 +619,11 @@ function stopRecording() {
   }
   elements.micBtn.classList.remove("listening");
   elements.micLabel.textContent = "Start listening";
-  renderTranscript();
+  state.interim = "";
+  renderConversation();
   state.lastInterimSent = "";
   scheduleTranslation(true);
-  if (!state.finals.length) setStatus("Ready");
+  if (!state.entries.length) setStatus("Ready");
 }
 
 async function toggleRecording() {
@@ -488,7 +642,7 @@ async function toggleRecording() {
     speakers.start(stream);
     startRecognition();
   } catch (err) {
-    showBanner("error", "Microphone permission was denied or unavailable. Allow mic access in your browser and try again.");
+    toast("Microphone permission was denied or unavailable. Allow mic access and try again.", "error", 5000);
     setStatus("Microphone blocked", true);
   }
 }
@@ -497,16 +651,16 @@ function clearAll() {
   stopRecording();
   stopSpeaking();
   cancelPendingTranslation();
-  state.finals = [];
-  state.finalSpeakers = [];
+  abortEntryFetches();
+  state.entries = [];
   state.interim = "";
   state.lastTranslatedKey = "";
   state.lastTranslatedFinals = "";
   state.lastInterimSent = "";
   state.streamFailures = 0;
   state.streamingEnabled = true;
-  renderTranscript();
-  renderTranslation("");
+  renderConversation();
+  renderLive("");
   clearBanner();
   setStatus("Cleared");
 }
@@ -516,7 +670,7 @@ function resetTranslationState() {
   state.lastTranslatedKey = "";
   state.lastTranslatedFinals = "";
   state.lastInterimSent = "";
-  renderTranslation("");
+  renderLive("");
 }
 
 function swapLanguages() {
@@ -529,16 +683,14 @@ function swapLanguages() {
     } catch {}
   }
   resetTranslationState();
-  scheduleTranslation(true);
+  retranslateAll();
 }
 
 async function copyText(text, button) {
   if (!text) return;
   try {
     await navigator.clipboard.writeText(text);
-    const original = button.textContent;
-    button.textContent = "✓";
-    setTimeout(() => (button.textContent = original), 1200);
+    toast("Copied to clipboard.", "info", 1500);
   } catch {
     const textarea = document.createElement("textarea");
     textarea.value = text;
@@ -546,9 +698,37 @@ async function copyText(text, button) {
     textarea.select();
     try {
       document.execCommand("copy");
-    } catch {}
+      toast("Copied to clipboard.", "info", 1500);
+    } catch {
+      toast("Copy failed.", "error", 3000);
+    }
     textarea.remove();
   }
+  const original = button.textContent;
+  button.textContent = "✓";
+  setTimeout(() => (button.textContent = original), 1200);
+}
+
+function bindShortcuts() {
+  window.addEventListener("keydown", (e) => {
+    const t = e.target;
+    const typing =
+      t &&
+      (t.tagName === "INPUT" ||
+        t.tagName === "SELECT" ||
+        t.tagName === "TEXTAREA" ||
+        t.isContentEditable);
+    if (typing) return;
+    if (e.code === "Space" && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      if (state.supported) toggleRecording();
+    } else if (e.key === "Escape") {
+      stopSpeaking();
+    } else if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      e.preventDefault();
+      clearAll();
+    }
+  });
 }
 
 function initSupport() {
@@ -574,6 +754,7 @@ function bindEvents() {
   elements.micBtn.addEventListener("click", toggleRecording);
   elements.clearBtn.addEventListener("click", clearAll);
   elements.swapBtn.addEventListener("click", swapLanguages);
+  elements.themeBtn.addEventListener("click", cycleTheme);
   elements.sourceLang.addEventListener("change", () => {
     if (state.recognition) {
       try {
@@ -581,11 +762,11 @@ function bindEvents() {
       } catch {}
     }
     resetTranslationState();
-    scheduleTranslation(true);
+    retranslateAll();
   });
   elements.targetLang.addEventListener("change", () => {
     resetTranslationState();
-    scheduleTranslation(true);
+    retranslateAll();
   });
   elements.copyTranscriptBtn.addEventListener("click", () =>
     copyText(getFinalText(), elements.copyTranscriptBtn)
@@ -597,12 +778,18 @@ function bindEvents() {
 }
 
 function init() {
+  let theme = "system";
+  try {
+    theme = localStorage.getItem("vt.theme") || "system";
+  } catch {}
+  applyTheme(theme);
   populateLanguages();
   bindEvents();
   initSupport();
   initTts();
   speakers.init();
   initConnectivity();
+  bindShortcuts();
   registerServiceWorker();
   setStatus("Idle");
 }

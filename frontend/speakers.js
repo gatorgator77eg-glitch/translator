@@ -87,6 +87,11 @@
     return Number.isFinite(n) ? n : 0;
   }
 
+  function speakerColor(tag) {
+    const hue = (tagNumber(tag) * 137.5) % 360;
+    return `hsl(${Math.round(hue)} 70% 55%)`;
+  }
+
   function saveNames() {
     try {
       localStorage.setItem(namesKey, JSON.stringify(names));
@@ -351,6 +356,7 @@
       chip.type = "button";
       chip.className = "speaker-chip";
       chip.title = "Click to rename this speaker";
+      chip.style.setProperty("--spk-color", speakerColor(tag));
       const talking =
         tag === talkingTag && now - lastTalkingAt < TALK_HOLD_MS;
       if (talking) chip.classList.add("talking");
@@ -371,9 +377,17 @@
     }
   }
 
-  function currentLabel() {
+  function currentSpeaker() {
     if (!workerReady || workerFailed || !currentTag) return null;
-    return names[currentTag] || `Speaker ${currentTag}`;
+    return {
+      label: names[currentTag] || `Speaker ${currentTag}`,
+      color: speakerColor(currentTag),
+    };
+  }
+
+  function currentLabel() {
+    const speaker = currentSpeaker();
+    return speaker ? speaker.label : null;
   }
 
   function init() {
@@ -385,5 +399,5 @@
     render();
   }
 
-  window.speakers = { init, start, stop, currentLabel };
+  window.speakers = { init, start, stop, currentLabel, currentSpeaker, color: speakerColor };
 })();

@@ -213,8 +213,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
+      const startedAt = Date.now();
       const result = await translate(payload);
-      send(res, 200, { translatedText: result.text, provider: result.provider });
+      send(res, 200, {
+        translatedText: result.text,
+        provider: result.provider,
+        ms: Date.now() - startedAt,
+      });
     } catch (err) {
       send(res, 502, { error: "Unable to translate", detail: err.message });
     }

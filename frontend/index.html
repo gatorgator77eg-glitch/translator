@@ -14,13 +14,30 @@
   <link rel="icon" type="image/png" href="icons/icon-192.png" />
   <title>Voice Translator — speak, transcribe, translate</title>
   <link rel="stylesheet" href="styles.css" />
+  <script>
+    (function () {
+      var t = "system";
+      try {
+        t = localStorage.getItem("vt.theme") || "system";
+      } catch (e) {}
+      var r = document.documentElement;
+      if (t === "dark") r.dataset.theme = "dark";
+      else if (t === "light") r.dataset.theme = "light";
+      else r.removeAttribute("data-theme");
+      var m = document.querySelector('meta[name="color-scheme"]');
+      if (m) m.content = t === "system" ? "light dark" : t;
+    })();
+  </script>
 </head>
 <body>
   <div class="app">
     <header class="app-header">
       <h1>Voice Translator</h1>
       <p class="tagline">Speak → transcribe → translate, 100% free in your browser</p>
-      <span id="support-badge" class="badge" hidden></span>
+      <div class="header-actions">
+        <span id="support-badge" class="badge" hidden></span>
+        <button id="theme-btn" class="icon-btn" type="button" title="Switch theme (System / Light / Dark)" aria-pressed="false">🌓</button>
+      </div>
     </header>
 
     <div id="banner" class="banner" role="alert" hidden></div>
@@ -40,8 +57,8 @@
     <section class="panels">
       <div class="panel" id="transcript-panel">
         <div class="panel-head">
-          <h2>Transcript</h2>
-          <button class="icon-btn" id="copy-transcript-btn" type="button" title="Copy transcript">⧉</button>
+          <h2>Conversation</h2>
+          <button class="icon-btn" id="copy-transcript-btn" type="button" title="Copy conversation">⧉</button>
         </div>
         <div id="transcript" class="output" aria-live="polite"></div>
         <p id="transcript-hint" class="hint">Press the mic and start speaking.</p>
@@ -49,13 +66,14 @@
 
       <div class="panel" id="translation-panel">
         <div class="panel-head">
-          <h2>Translation</h2>
+          <h2>Live translation</h2>
           <div class="head-actions">
             <button class="icon-btn" id="speak-translation-btn" type="button" title="Speak translation" aria-pressed="false">🔊</button>
             <button class="icon-btn" id="copy-translation-btn" type="button" title="Copy translation">⧉</button>
           </div>
         </div>
         <div id="translation" class="output" aria-live="polite"></div>
+        <p id="translation-meta" class="meta" hidden></p>
         <p id="translation-hint" class="hint">The translated text will appear here.</p>
       </div>
 
@@ -72,17 +90,20 @@
     </section>
 
     <section class="controls" aria-label="Recording controls">
-      <button id="mic-btn" class="mic-btn" type="button">
+      <button id="mic-btn" class="mic-btn" type="button" aria-keyshortcuts="Space">
         <span class="mic-icon" aria-hidden="true">🎙</span>
         <span id="mic-label">Start listening</span>
       </button>
-      <button class="control-btn" id="clear-btn" type="button">Clear</button>
+      <button class="control-btn" id="clear-btn" type="button" aria-keyshortcuts="Control+Enter">Clear</button>
     </section>
 
     <footer class="app-footer">
       <p id="status-line">Idle</p>
+      <p class="key-hint">Space = mic · Ctrl+Enter = clear · Esc = stop audio · click toasts to dismiss</p>
     </footer>
   </div>
+
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
   <script src="speakers.js"></script>
   <script src="app.js"></script>
