@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light dark" />
+  <title>Voice Translator — speak, transcribe, translate</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <h1>Voice Translator</h1>
+      <p class="tagline">Speak → transcribe → translate, 100% free in your browser</p>
+      <span id="support-badge" class="badge" hidden></span>
+    </header>
+
+    <div id="banner" class="banner" role="alert" hidden></div>
+
+    <section class="lang-bar" aria-label="Language selection">
+      <div class="lang-field">
+        <label for="source-lang">I speak</label>
+        <select id="source-lang"></select>
+      </div>
+      <button id="swap-btn" class="swap-btn" type="button" title="Swap languages" aria-label="Swap languages">⇄</button>
+      <div class="lang-field">
+        <label for="target-lang">Translate to</label>
+        <select id="target-lang"></select>
+      </div>
+    </section>
+
+    <section class="panels">
+      <div class="panel" id="transcript-panel">
+        <div class="panel-head">
+          <h2>Transcript</h2>
+          <button class="icon-btn" id="copy-transcript-btn" type="button" title="Copy transcript">⧉</button>
+        </div>
+        <div id="transcript" class="output" aria-live="polite"></div>
+        <p id="transcript-hint" class="hint">Press the mic and start speaking.</p>
+      </div>
+
+      <div class="panel" id="translation-panel">
+        <div class="panel-head">
+          <h2>Translation</h2>
+          <button class="icon-btn" id="copy-translation-btn" type="button" title="Copy translation">⧉</button>
+        </div>
+        <div id="translation" class="output" aria-live="polite"></div>
+        <p id="translation-hint" class="hint">The translated text will appear here.</p>
+      </div>
+    </section>
+
+    <section class="controls" aria-label="Recording controls">
+      <button id="mic-btn" class="mic-btn" type="button">
+        <span class="mic-icon" aria-hidden="true">🎙</span>
+        <span id="mic-label">Start listening</span>
+      </button>
+      <button class="control-btn" id="clear-btn" type="button">Clear</button>
+    </section>
+
+    <footer class="app-footer">
+      <p id="status-line">Idle</p>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

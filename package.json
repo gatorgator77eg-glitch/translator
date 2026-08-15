@@ -1,0 +1,16 @@
+{
+  "name": "voice-translator",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Zero-cost voice-to-text translation app: Web Speech API + LibreTranslate proxy",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "start:backend": "node backend/server.mjs",
+    "start:frontend": "node frontend/serve.mjs",
+    "test:backend": "node --test backend/test.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
